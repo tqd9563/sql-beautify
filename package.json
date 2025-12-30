@@ -25,12 +25,12 @@
         },
         "sql-beautify.uppercase": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Convert keywords to uppercase"
         },
         "sql-beautify.indent": {
           "type": "string",
-          "default": "  ",
+          "default": "    ",
           "description": "Indentation string (e.g. 2 spaces)"
         },
         "sql-beautify.customRules": {
