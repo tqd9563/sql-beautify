@@ -44,6 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
             { regex: /where\s*[\r\n]+\s*/gi, replacement: 'where ' },
             { regex: /having\s*[\r\n]+\s*/gi, replacement: 'having ' },
             { regex: /group\s+by\s*[\r\n]+\s*/gi, replacement: 'group by ' },
+            { regex: /order\s+by\s*[\r\n]+\s*/gi, replacement: 'order by ' },
             { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
             { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
             // 全局 Dedent 修正：将 8 格缩进降低到 4 格（主要针对 CTE 内容）
