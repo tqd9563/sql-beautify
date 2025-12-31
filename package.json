@@ -1,6 +1,6 @@
 {
-  "name": "sql-beautify",
-  "displayName": "sql-beautify",
+  "name": "sql-beautify-lilith",
+  "displayName": "SQL Beautify",
   "description": "beautify sql customizely",
   "publisher": "yuiko",
   "version": "0.0.1",
@@ -67,7 +67,7 @@
     "commands": [
       {
         "command": "sql-beautify.helloWorld",
-        "title": "SQL Beautify: Hello World"
+        "title": "SQL Beautify: Go Go Go"
       }
 
     ]
