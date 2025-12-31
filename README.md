@@ -1,71 +1,27 @@
-# sql-beautify README
+# <div align="center">sql-beautify README</div>
 
-This is the README for your extension "sql-beautify". After writing up a brief description, we recommend including the following sections.
+![Typescript version](https://img.shields.io/badge/typescript-5.7.2-blue.svg) ![Vscode version](https://img.shields.io/badge/vscode-1.105.0-blue.svg) ![Version](https://img.shields.io/badge/version-0.0.1-green.svg)
+
+基于SQL-Formatter魔改的自定义SQL格式化插件
 
 ## Features
 
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
-
----
-
-## Following extension guidelines
-
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
-
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
-
-## Working with Markdown
-
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
-
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
-
-## For more information
-
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
-
-**Enjoy!**
+- global style
+  - 关键字全小写
+  - 缩进标准为4 spaces
+- select
+  - select后的第一个字段与select保持同一行，中间空两格空格；
+  - 其余字段保持独立一行一个，且所有字段保持左对齐
+- where
+  - where语句内的and关键字其，缩进层级统一为”比where多4格“。
+- join
+  - join的缩进层级与前一个from关键字，或是前一个join关键字保持一致
+  - join的条件语句（即on和and关键字），与join分处不同的行，每一个条件单独位于一行，且整体缩进相较于join关键字要多4 spaces
+- other key words
+  - /from/join/where/group by/order by 等关键字后先接空格 + 字段名/表名
+- case when
+  - case和end左对齐
+  - 内部的每一个when占据单独一行，且when语句的缩进深度比case和end要多出4格
+- CTE
+  - 多个CTE之间需要空行隔开，且CTE的表名需顶格
+  - CTE内部的整个select代码块，整体缩进4格（相较于CTE的表名）
