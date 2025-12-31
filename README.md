@@ -1,10 +1,14 @@
-# <div align="center">sql-beautify README</div>
+# <div align="center">SQL Beautify Lilith </div>
 
 ![Typescript version](https://img.shields.io/badge/typescript-5.7.2-blue.svg) ![Vscode version](https://img.shields.io/badge/vscode-1.105.0-blue.svg) ![Version](https://img.shields.io/badge/version-0.0.1-green.svg)
 
-基于SQL-Formatter魔改的自定义SQL格式化插件
+## 简介
+基于SQL-Formatter魔改的自定义SQL格式化插件(Lilith反欺诈团队内部使用)
 
-## Features
+## 使用
+全选SQL代码，然后`cmd+shift+p`打开命令面板，最后输入命令`Antifradu SQL Beautify: Go Go Go`即可
+
+## 特性
 
 - global style
   - 关键字全小写
