@@ -46,37 +46,96 @@ export function activate(context: vscode.ExtensionContext) {
             { regex: /group\s+by\s*[\r\n]+\s*/gi, replacement: 'group by ' },
             { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
             { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
-            { regex: /\n(\s{8}|\t{2})/g, replacement: '\n    ' },
+            // 全局 Dedent 修正：将 8 格缩进降低到 4 格（主要针对 CTE 内容）
+            { regex: /\n\s{8}/g, replacement: '\n    ' },
         ];
 
         for (const rule of compactRules) {
             formattedText = formattedText.replace(rule.regex, rule.replacement);
         }
 
-        // --- 2. GROUP BY 单行修复 ---
+        // --- 2. 修复问题一：CTE 间隔和顶格 ---
+        formattedText = formattedText.replace(/\),\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/g, '),\n\n$1 as');
+        formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
+        formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
+
+        // --- 3. 修复问题二：所有 Select 字段对齐 (S + 8) ---
+        const lines = formattedText.split('\n');
+        let currentSelectIndent: number | null = null;
+        let resultLines: string[] = [];
+
+        for (let i = 0; i < lines.length; i++) {
+            const line = lines[i];
+            const trimmedLine = line.trimStart();
+
+            // 检测 SELECT 块开始
+            if (trimmedLine.toLowerCase().startsWith('select  ')) {
+                const match = line.match(/^(\s*)select/i);
+                currentSelectIndent = match ? match[1].length : 0;
+                resultLines.push(line);
+                continue;
+            }
+
+            // 在 SELECT 块内部
+            if (currentSelectIndent !== null) {
+                // 检测块结束 (遇到 FROM 或 CTE 结束括号)
+                if (trimmedLine.toLowerCase().startsWith('from ') || trimmedLine === ')') {
+                    const indentStr = ' '.repeat(currentSelectIndent);
+                    resultLines.push(indentStr + trimmedLine);
+                    currentSelectIndent = null;
+                    continue;
+                }
+
+                if (line.trim() === '') {
+                    resultLines.push(line);
+                    continue;
+                }
+
+                // 计算对齐缩进
+                const match = line.match(/^(\s+)/);
+                const originalIndent = match ? match[1].length : 0;
+                
+                // 默认偏移公式：selectIndent + 8 (保留原有相对缩进差异)
+                // 假设原本字段层级是 selectIndent + 4
+                const baseFieldIndent = currentSelectIndent + 4;
+                const targetIndent = currentSelectIndent + 8 + (originalIndent - baseFieldIndent);
+                
+                resultLines.push(' '.repeat(Math.max(0, targetIndent)) + trimmedLine);
+            } else {
+                resultLines.push(line);
+            }
+        }
+        formattedText = resultLines.join('\n');
+
+        // --- 4. 修复问题三：WHERE 中的 AND/OR ---
+        // 目标：将 or ( 后的内容缩进加深
+        formattedText = formattedText.replace(/((?:and|or)\s+\(\s*[\r\n]+)\s{4}(\S)/gi, '$1        $2');
+        formattedText = formattedText.replace(/(\n\s{4})(and|or)\b/gi, '$1    $2');
+
+        // --- 5. 修复问题四：CASE WHEN 内部缩进与 THEN 换行 ---
+        // 5.1 WHEN 语句缩进修正
+        // 5.2 THEN 换行
+        formattedText = formattedText.replace(/(\s+when[\s\S]*?)\s+then\s+/gi, (match: string, whenPart: string) => {
+            const lines = whenPart.split('\n');
+            const lastLine = lines[lines.length - 1];
+            const indentMatch = lastLine.match(/^(\s+)/);
+            const baseIndent = indentMatch ? indentMatch[1] : '            ';
+            return whenPart + '\n' + baseIndent + 'then ';
+        });
+
+        // --- 6. 结尾对齐修复 ---
+        // CTE 结束括号顶格
+        formattedText = formattedText.replace(/[\r\n]+\s{4,8}\)/g, '\n)');
+        formattedText = formattedText.replace(/[\r\n]+\s{4,8}\),/g, '\n),');
+
+        // GROUP BY 单行
         const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|;|$)/gi; 
         formattedText = formattedText.replace(groupByRegex, (match: string, content: string, tail: string) => {
             const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
             return cleanContent + tail;
         });
 
-        // --- 3. 修复问题一：CTE 间隔和顶格 ---
-        
-        // 3.1 CTE 之间空一行且顶格
-        // 匹配 ), \n [空格] CTE_NAME as
-        formattedText = formattedText.replace(/\),\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/g, '),\n\n$1 as');
-
-        // 3.2 顶层 SELECT 顶格且空一行
-        // 确保紧跟在 CTE 结束括号后的顶层 select 顶格且上方有空行
-        formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
-        // 兜底处理：如果 select 前面已经被缩进了 (由于 Indentation Fix)
-        formattedText = formattedText.replace(/\)\s*[\r\n]+\s*select/gi, ')\n\nselect');
-
-        // 3.3 括号结尾修正
-        formattedText = formattedText.replace(/[\r\n]+\s{4}\)/g, '\n)');
-        formattedText = formattedText.replace(/[\r\n]+\s{4}\),/g, '\n),');
-
-        // --- 4. 用户自定义正则 ---
+        // --- 用户自定义正则 ---
         for (const rule of customRules) {
             if (rule.regex) {
                 try {
@@ -122,11 +181,15 @@ export function activate(context: vscode.ExtensionContext) {
              const text = editor.document.getText();
              const formatted = formatLogic(text, config);
              const fullRange = new vscode.Range(editor.document.positionAt(0), editor.document.positionAt(text.length));
-             editor.edit(eb => eb.replace(fullRange, formatted));
+             editor.edit(editBuilder => {
+                 editBuilder.replace(fullRange, formatted);
+             });
         } else {
             const text = editor.document.getText(selection);
             const formatted = formatLogic(text, config);
-            editor.edit(eb => eb.replace(selection, formatted));
+            editor.edit(editBuilder => {
+                editBuilder.replace(selection, formatted);
+            });
         }
     });
 

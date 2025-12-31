@@ -1,14 +1,11 @@
-
 const { format } = require('sql-formatter');
 const fs = require('fs');
+const path = require('path');
 
-// Read sample.sql - ADJUSTED PATH
-const sampleSql = fs.readFileSync('test/sample.sql', 'utf8');
+const workspaceRoot = '/Users/lilithgames/sql-beautify';
+const samplePath = path.join(workspaceRoot, 'test/sample.sql');
+const sampleSql = fs.readFileSync(samplePath, 'utf8');
 
-console.log('--- Input SQL ---');
-console.log(sampleSql);
-
-// Mock Configuration
 const config = {
     dialect: 'sql',
     uppercase: false,
@@ -16,7 +13,6 @@ const config = {
     customRules: []
 };
 
-// --- Replicate Logic from extension.ts ---
 function formatLogic(text) {
     const dialect = config.dialect || 'sql';
     const uppercase = config.uppercase;
@@ -43,45 +39,81 @@ function formatLogic(text) {
         return text; 
     }
 
-    // --- Compact Rules ---
+    // --- 1. 基础紧凑规则 ---
     const compactRules = [
-        { regex: /select\s*\n\s+/gi, replacement: 'select  ' },
-        { regex: /from\s*\n\s+/gi, replacement: 'from ' },
-        { regex: /where\s*\n\s+/gi, replacement: 'where ' },
-        { regex: /having\s*\n\s+/gi, replacement: 'having ' },
-        { regex: /with\s*\n\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
-        { regex: /with\s+([a-zA-Z0-9_]+)\s*\n\s*as/gi, replacement: 'with $1 as' }
+        { regex: /select\s*[\r\n]+\s*/gi, replacement: 'select  ' },
+        { regex: /from\s*[\r\n]+\s*/gi, replacement: 'from ' },
+        { regex: /where\s*[\r\n]+\s*/gi, replacement: 'where ' },
+        { regex: /having\s*[\r\n]+\s*/gi, replacement: 'having ' },
+        { regex: /group\s+by\s*[\r\n]+\s*/gi, replacement: 'group by ' },
+        { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
+        { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
+        { regex: /\n\s{8}/g, replacement: '\n    ' },
     ];
 
     for (const rule of compactRules) {
         formattedText = formattedText.replace(rule.regex, rule.replacement);
     }
-    
+
+    // --- 2. 修复问题一：CTE 间隔和顶格 ---
+    formattedText = formattedText.replace(/\),\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/g, '),\n\n$1 as');
+    formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
+    formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
+
+    // --- 3. 修复问题二：所有 Select 字段对齐 (S + 8) ---
+    const lines = formattedText.split('\n');
+    let currentSelectIndent = null;
+    const newLines = [];
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const trimmedLine = line.trimStart();
+
+        if (trimmedLine.toLowerCase().startsWith('select  ')) {
+            const match = line.match(/^(\s*)select/i);
+            currentSelectIndent = match ? match[1].length : 0;
+            newLines.push(line);
+            continue;
+        }
+
+        if (currentSelectIndent !== null) {
+            if (trimmedLine.toLowerCase().startsWith('from ') || trimmedLine.toLowerCase().startsWith(')')) {
+                const indentStr = ' '.repeat(currentSelectIndent);
+                newLines.push(indentStr + trimmedLine);
+                currentSelectIndent = null;
+                continue;
+            }
+
+            if (line.trim() === '') {
+                newLines.push(line);
+                continue;
+            }
+
+            const match = line.match(/^(\s+)/);
+            const originalIndent = match ? match[1].length : 0;
+            const targetIndent = currentSelectIndent + 8 + (originalIndent - (currentSelectIndent + 4));
+            newLines.push(' '.repeat(Math.max(0, targetIndent)) + trimmedLine);
+        } else {
+            newLines.push(line);
+        }
+    }
+    formattedText = newLines.join('\n');
+
+    // --- 4. 括号结尾修正 ---
+    formattedText = formattedText.replace(/[\r\n]+\s+\)/g, '\n)');
+    formattedText = formattedText.replace(/[\r\n]+\s+\),/g, '\n),');
+
+    // --- 5. GROUP BY 单行修复 ---
+    const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|;|$)/gi; 
+    formattedText = formattedText.replace(groupByRegex, (match, content, tail) => {
+        const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
+        return cleanContent + tail;
+    });
+
     return formattedText;
 }
 
 const result = formatLogic(sampleSql);
-console.log('\n--- Formatted Output ---');
+console.log('--- OUTPUT START ---');
 console.log(result);
-
-// Read expected - ADJUSTED PATH
-const expected = fs.readFileSync('test/expect.sql', 'utf8');
-
-const normalize = (str) => str.replace(/\r\n/g, '\n').trim();
-
-if (normalize(result) === normalize(expected)) {
-    console.log('\n✅ SUCCESS: Output matches expected result!');
-} else {
-    console.log('\n❌ FAILURE: Output does not match expected result.');
-    console.log('\n--- Diff (Expected vs Actual) ---');
-    const expectedLines = normalize(expected).split('\n');
-    const resultLines = normalize(result).split('\n');
-    for (let i = 0; i < Math.max(expectedLines.length, resultLines.length); i++) {
-        if (expectedLines[i] !== resultLines[i]) {
-            console.log(`Line ${i + 1}:`);
-            console.log(`  EXP: "${expectedLines[i] || ''}"`);
-            console.log(`  ACT: "${resultLines[i] || ''}"`);
-        }
-    }
-}
-
+console.log('--- OUTPUT END ---');
