@@ -56,11 +56,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // --- 2. 修复问题一：CTE 间隔和顶格 ---
-        // 确保 CTE 之间有空行且顶格
         formattedText = formattedText.replace(/\),\s*(?:[\r\n]+\s*)?([a-zA-Z0-9_]+)\s+as/gi, '),\n\n$1 as');
-        // 确保顶层 SELECT 顶格且上方留空
         formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
-        // 修正可能被 compactRules 误伤的顶层 select 缩进
         formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
 
         // --- 3. 核心修复逻辑：SELECT 块级字段对齐 ---
@@ -73,19 +70,16 @@ export function activate(context: vscode.ExtensionContext) {
             let trimmed = line.trimStart();
             let lowerTrimmed = trimmed.toLowerCase();
 
-            // 3.1 处理 CTE 结束括号 (强制顶格)
             if (trimmed === ')' || trimmed === '),') {
                 finalLines.push(trimmed);
                 i++;
                 continue;
             }
 
-            // 3.2 识别 SELECT 块开始
             if (lowerTrimmed.startsWith('select  ')) {
                 const match = line.match(/^(\s*)select/i);
                 const selectIndent = match ? match[1].length : 0;
                 
-                // 收集整个 SELECT 块直到遇到 FROM 或边界
                 let blockLines: string[] = [line];
                 let j = i + 1;
                 while (j < lines.length) {
@@ -98,7 +92,6 @@ export function activate(context: vscode.ExtensionContext) {
                 }
 
                 if (blockLines.length > 1) {
-                    // 找到块内字段行的最小缩进
                     let minFieldIndent = Infinity;
                     for (let k = 1; k < blockLines.length; k++) {
                         if (!blockLines[k].trim()) continue;
@@ -107,13 +100,10 @@ export function activate(context: vscode.ExtensionContext) {
                         if (indentLen < minFieldIndent) minFieldIndent = indentLen;
                     }
 
-                    // 计算目标对齐深度 (selectIndent + 8)
                     const targetBaseIndent = selectIndent + 8;
-                    // 如果 minFieldIndent 为 0 (说明有 line-start 的内容)，可能是之前的正则破坏了缩进
-                    // 我们做一个防御性处理
                     const delta = (minFieldIndent === Infinity) ? 0 : (targetBaseIndent - minFieldIndent);
 
-                    finalLines.push(blockLines[0]); // select 行本身不动
+                    finalLines.push(blockLines[0]);
                     for (let k = 1; k < blockLines.length; k++) {
                         let bLine = blockLines[k];
                         if (!bLine.trim()) {
@@ -122,7 +112,6 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                         const m = bLine.match(/^(\s+)/);
                         const currentIndent = m ? m[1].length : 0;
-                        // 应用 delta 偏移，保留相对层级
                         const newIndent = Math.max(0, currentIndent + delta);
                         finalLines.push(' '.repeat(newIndent) + bLine.trimStart());
                     }
@@ -139,25 +128,78 @@ export function activate(context: vscode.ExtensionContext) {
         }
         formattedText = finalLines.join('\n');
 
-        // --- 4. 修复问题三：WHERE 中的 AND/OR 嵌套 ---
-        const nestedWhereRegex = /((?:and|or)\s+\(\s*[\r\n]+)([\s\S]*?)(\n\s*\))/gi;
-        formattedText = formattedText.replace(nestedWhereRegex, (match, head, body, tail) => {
+        // --- 4. 修复 WHERE 内部及其嵌套 AND/OR 的对齐 ---
+        const wherePassLines = formattedText.split('\n');
+        let currentWhereIndent: number | null = null;
+        let resultLines: string[] = [];
+
+        for (let k = 0; k < wherePassLines.length; k++) {
+            const line = wherePassLines[k];
+            const trimmed = line.trimStart();
+            const lower = trimmed.toLowerCase();
+
+            // 识别 WHERE 块开始
+            if (lower.startsWith('where ')) {
+                const match = line.match(/^(\s*)where/i);
+                currentWhereIndent = match ? match[1].length : 0;
+                resultLines.push(line);
+                continue;
+            }
+
+            if (currentWhereIndent !== null) {
+                // 块终止符
+                if (lower.startsWith('group by') || lower.startsWith('order by') || lower.startsWith('having') || lower.startsWith('limit') || lower.startsWith('select ') || lower.startsWith('insert ') || lower.startsWith('update ') || lower.startsWith('delete ') || lower.startsWith('union ') || trimmed === ')' || trimmed === '),') {
+                    currentWhereIndent = null;
+                    resultLines.push(line);
+                    continue;
+                }
+
+                // 处理 AND/OR 行
+                if (lower.startsWith('and ') || lower.startsWith('or ')) {
+                    const m = line.match(/^(\s+)/);
+                    const currentIndent = m ? m[1].length : 0;
+                    // 如果缩进过深 (常见于 sql-formatter 在 CTE 内部的处理)，将其修正为 whereIndent + 4
+                    // 或者如果缩进深度是 whereIndent + 8 (sql-formatter 默认)，也修正为 + 4
+                    if (currentIndent > currentWhereIndent + 4) {
+                        resultLines.push(' '.repeat(currentWhereIndent + 4) + trimmed);
+                        continue;
+                    }
+                }
+                
+                // 处理非关键字行（条件的续行等），也确保它们不比 where + 4 更浅（除非是顶层）
+                const m = line.match(/^(\s+)/);
+                const currentIndent = m ? m[1].length : 0;
+                if (currentIndent > currentWhereIndent + 4 && !lower.startsWith('case')) {
+                     // 同样修正为 + 4，但保留相对于字段开始的偏移？
+                     // 为简单起见，且满足用户“比where多4格”的要求：
+                     resultLines.push(' '.repeat(currentWhereIndent + 4) + trimmed);
+                     continue;
+                }
+            }
+            resultLines.push(line);
+        }
+        formattedText = resultLines.join('\n');
+
+        // --- 5. 修复嵌套括号块 (and / or 内部) ---
+        // 目标：or ( \n 且内部内容缩进 + 4，) 与 or 对齐
+        const nestedBlockRegex = /((?:and|or)\s+\(\s*[\r\n]+)([\s\S]*?)(\n\s*\))/gi;
+        formattedText = formattedText.replace(nestedBlockRegex, (match, head, body, tail) => {
             const indentMatch = head.match(/^(\s*)/);
             const headIndent = indentMatch ? indentMatch[1].length : 0;
-            const bodyIndent = ' '.repeat(headIndent + 4);
+            const targetBodyIndent = ' '.repeat(headIndent + 4);
             
             const indentedBody = body.split('\n').map((line: string) => {
                 if (line.trim() === '') return line;
-                return bodyIndent + line.trimStart();
+                return targetBodyIndent + line.trimStart();
             }).join('\n');
             
             return head + indentedBody + '\n' + ' '.repeat(headIndent) + ')';
         });
 
-        // --- 5. 修复问题四：CASE WHEN 内部格式精修 (栈模式) ---
+        // --- 6. 修复 CASE WHEN 内部格式精修 (栈模式) ---
         const caseLines = formattedText.split('\n');
         let caseStack: number[] = [];
-        let resultLines: string[] = [];
+        let finalCaseLines: string[] = [];
 
         for (let i = 0; i < caseLines.length; i++) {
             const line = caseLines[i];
@@ -167,7 +209,7 @@ export function activate(context: vscode.ExtensionContext) {
             if (lowerTrimmed.startsWith('case')) {
                 const match = line.match(/^(\s*)case/i);
                 caseStack.push(match ? match[1].length : 0);
-                resultLines.push(line);
+                finalCaseLines.push(line);
                 continue;
             }
 
@@ -175,31 +217,29 @@ export function activate(context: vscode.ExtensionContext) {
                 const currentCaseIndent = caseStack[caseStack.length - 1];
 
                 if (lowerTrimmed.startsWith('end')) {
-                    resultLines.push(' '.repeat(currentCaseIndent) + trimmed);
+                    finalCaseLines.push(' '.repeat(currentCaseIndent) + trimmed);
                     caseStack.pop();
                     continue;
                 }
 
-                // WHEN, THEN, ELSE 缩进一致
                 if (lowerTrimmed.startsWith('when ') || lowerTrimmed.startsWith('else ') || lowerTrimmed.startsWith('then ')) {
-                    resultLines.push(' '.repeat(currentCaseIndent + 4) + trimmed);
+                    finalCaseLines.push(' '.repeat(currentCaseIndent + 4) + trimmed);
                     continue;
                 }
                 
-                // CASE 内部的其他子条件 (如 AND/OR) 缩进更深一层
                 const m = line.match(/^(\s+)/);
                 if (m) {
-                    resultLines.push(' '.repeat(currentCaseIndent + 8) + trimmed);
+                    finalCaseLines.push(' '.repeat(currentCaseIndent + 8) + trimmed);
                 } else {
-                    resultLines.push(line);
+                    finalCaseLines.push(line);
                 }
             } else {
-                resultLines.push(line);
+                finalCaseLines.push(line);
             }
         }
-        formattedText = resultLines.join('\n');
+        formattedText = finalCaseLines.join('\n');
 
-        // --- 6. GROUP BY 修正 (防止吞掉 CTE 的换行) ---
+        // --- 7. GROUP BY 修正 (防止吞掉 CTE 的换行) ---
         const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|\)|;|$)/gi; 
         formattedText = formattedText.replace(groupByRegex, (match: string, content: string, tail: string) => {
             const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
