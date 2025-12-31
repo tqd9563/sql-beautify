@@ -18,6 +18,7 @@
     "type": "git",
     "url": "https://github.com/tqd9563/sql-beautify"
   },
+  "license": "MIT",
   "main": "./out/extension.js",
   "contributes": {
     "configuration": {
