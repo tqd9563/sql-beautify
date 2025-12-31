@@ -1,4 +1,4 @@
-# <div align="center">SQL Beautify Lilith </div>
+# <div align="center">Lilith Antifraud SQL Beautify</div>
 
 ![Typescript version](https://img.shields.io/badge/typescript-5.7.2-blue.svg) ![Vscode version](https://img.shields.io/badge/vscode-1.105.0-blue.svg) ![Version](https://img.shields.io/badge/version-0.0.1-green.svg)
 
