@@ -2,6 +2,7 @@
   "name": "sql-beautify",
   "displayName": "sql-beautify",
   "description": "beautify sql customizely",
+  "publisher": "yuiko",
   "version": "0.0.1",
   "engines": {
     "vscode": "^1.105.0"
