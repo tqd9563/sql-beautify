@@ -3,12 +3,13 @@
   "displayName": "Lilith Antifraud SQL Beautify",
   "description": "Beautify sql customizely for Lilith Antifraud team",
   "publisher": "yuiko",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "engines": {
     "vscode": "^1.105.0"
   },
+  "icon": "resource/icon.png",
   "categories": [
-    "Other"
+    "Formatters"
   ],
   "activationEvents": [
     "onCommand:sql-beautify.helloWorld",

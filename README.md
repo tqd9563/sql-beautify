@@ -1,6 +1,6 @@
-# <div align="center">Lilith Antifraud SQL Beautify</div>
+# <div align="left">Lilith Antifraud SQL Beautify</div>
 
-![Typescript version](https://img.shields.io/badge/typescript-5.7.2-blue.svg) ![Vscode version](https://img.shields.io/badge/vscode-1.105.0-blue.svg) ![Version](https://img.shields.io/badge/version-0.0.1-green.svg)
+![Typescript version](https://img.shields.io/badge/typescript-5.7.2-blue.svg) ![Vscode version](https://img.shields.io/badge/vscode-1.105.0-blue.svg) ![Version](https://img.shields.io/badge/version-1.0.1-green.svg)
 
 ## 简介
 基于SQL-Formatter魔改的自定义SQL格式化插件(Lilith反欺诈团队内部使用)
@@ -17,7 +17,7 @@
   - select后的第一个字段与select保持同一行，中间空两格空格；
   - 其余字段保持独立一行一个，且所有字段保持左对齐
 - where
-  - where语句内的and关键字其，缩进层级统一为”比where多4格“。
+  - where语句内的and关键字，其缩进层级统一为”比where多4格“。
 - join
   - join的缩进层级与前一个from关键字，或是前一个join关键字保持一致
   - join的条件语句（即on和and关键字），与join分处不同的行，每一个条件单独位于一行，且整体缩进相较于join关键字要多4 spaces
