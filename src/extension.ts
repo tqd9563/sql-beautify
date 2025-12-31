@@ -47,7 +47,7 @@ export function activate(context: vscode.ExtensionContext) {
             { regex: /order\s+by\s*[\r\n]+\s*/gi, replacement: 'order by ' },
             { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
             { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
-            // 修正全局缩进：sql-formatter 在 CTE 内部有时会过度缩进关键字
+            // 修正全局关键字缩进：将 8-12 格的关键字回归到 4 格 (针对 CTE 内部)
             { regex: /\n\s{8,12}(select|from|where|group|having|order|limit)/gi, replacement: '\n    $1' },
         ];
 
@@ -56,11 +56,14 @@ export function activate(context: vscode.ExtensionContext) {
         }
 
         // --- 2. 修复问题一：CTE 间隔和顶格 ---
-        formattedText = formattedText.replace(/\),\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/g, '),\n\n$1 as');
+        // 确保 CTE 之间有空行且顶格
+        formattedText = formattedText.replace(/\),\s*(?:[\r\n]+\s*)?([a-zA-Z0-9_]+)\s+as/gi, '),\n\n$1 as');
+        // 确保顶层 SELECT 顶格且上方留空
         formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
+        // 修正可能被 compactRules 误伤的顶层 select 缩进
         formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
 
-        // --- 3. 核心修复逻辑：块级处理 (处理 Select 字段对齐) ---
+        // --- 3. 核心修复逻辑：SELECT 块级字段对齐 ---
         const lines = formattedText.split('\n');
         let finalLines: string[] = [];
         let i = 0;
@@ -82,7 +85,7 @@ export function activate(context: vscode.ExtensionContext) {
                 const match = line.match(/^(\s*)select/i);
                 const selectIndent = match ? match[1].length : 0;
                 
-                // 收集整个 SELECT 块直到遇到 FROM
+                // 收集整个 SELECT 块直到遇到 FROM 或边界
                 let blockLines: string[] = [line];
                 let j = i + 1;
                 while (j < lines.length) {
@@ -104,11 +107,13 @@ export function activate(context: vscode.ExtensionContext) {
                         if (indentLen < minFieldIndent) minFieldIndent = indentLen;
                     }
 
-                    // 计算目标对齐偏移 (selectIndent + 8)
+                    // 计算目标对齐深度 (selectIndent + 8)
                     const targetBaseIndent = selectIndent + 8;
+                    // 如果 minFieldIndent 为 0 (说明有 line-start 的内容)，可能是之前的正则破坏了缩进
+                    // 我们做一个防御性处理
                     const delta = (minFieldIndent === Infinity) ? 0 : (targetBaseIndent - minFieldIndent);
 
-                    finalLines.push(blockLines[0]); // 第一行 select 原样
+                    finalLines.push(blockLines[0]); // select 行本身不动
                     for (let k = 1; k < blockLines.length; k++) {
                         let bLine = blockLines[k];
                         if (!bLine.trim()) {
@@ -117,6 +122,7 @@ export function activate(context: vscode.ExtensionContext) {
                         }
                         const m = bLine.match(/^(\s+)/);
                         const currentIndent = m ? m[1].length : 0;
+                        // 应用 delta 偏移，保留相对层级
                         const newIndent = Math.max(0, currentIndent + delta);
                         finalLines.push(' '.repeat(newIndent) + bLine.trimStart());
                     }
@@ -148,7 +154,7 @@ export function activate(context: vscode.ExtensionContext) {
             return head + indentedBody + '\n' + ' '.repeat(headIndent) + ')';
         });
 
-        // --- 5. 修复问题四：CASE WHEN 内部格式精修 ---
+        // --- 5. 修复问题四：CASE WHEN 内部格式精修 (栈模式) ---
         const caseLines = formattedText.split('\n');
         let caseStack: number[] = [];
         let resultLines: string[] = [];
@@ -174,11 +180,13 @@ export function activate(context: vscode.ExtensionContext) {
                     continue;
                 }
 
+                // WHEN, THEN, ELSE 缩进一致
                 if (lowerTrimmed.startsWith('when ') || lowerTrimmed.startsWith('else ') || lowerTrimmed.startsWith('then ')) {
                     resultLines.push(' '.repeat(currentCaseIndent + 4) + trimmed);
                     continue;
                 }
                 
+                // CASE 内部的其他子条件 (如 AND/OR) 缩进更深一层
                 const m = line.match(/^(\s+)/);
                 if (m) {
                     resultLines.push(' '.repeat(currentCaseIndent + 8) + trimmed);
@@ -191,8 +199,8 @@ export function activate(context: vscode.ExtensionContext) {
         }
         formattedText = resultLines.join('\n');
 
-        // --- 6. GROUP BY 单行修复 ---
-        const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|;|$)/gi; 
+        // --- 6. GROUP BY 修正 (防止吞掉 CTE 的换行) ---
+        const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|\)|;|$)/gi; 
         formattedText = formattedText.replace(groupByRegex, (match: string, content: string, tail: string) => {
             const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
             return cleanContent + tail;

@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const workspaceRoot = '/Users/lilithgames/sql-beautify';
-const samplePath = path.join(workspaceRoot, 'test/group1/sample.sql');
+const samplePath = path.join(workspaceRoot, 'test/group2/sample.sql');
 const sampleSql = fs.readFileSync(samplePath, 'utf8');
 
 const config = {
@@ -40,8 +40,11 @@ function formatLogic(text) {
     }
 
     // --- 0. 预处理 ---
-    // 确保 case 始终在新的一行
-    formattedText = formattedText.replace(/,\s*case\b/gi, ',\ncase');
+    formattedText = formattedText.replace(/([^\n])\s*\bcase\b/gi, '$1\ncase');
+    formattedText = formattedText.replace(/([^\n])\s*\bwhen\b/gi, '$1\nwhen');
+    formattedText = formattedText.replace(/([^\n])\s*\bthen\b/gi, '$1\nthen');
+    formattedText = formattedText.replace(/([^\n])\s*\belse\b/gi, '$1\nelse');
+    formattedText = formattedText.replace(/([^\n])\s*\bend\b/gi, '$1\nend');
 
     // --- 1. 基础紧凑规则 ---
     const compactRules = [
@@ -53,8 +56,6 @@ function formatLogic(text) {
         { regex: /order\s+by\s*[\r\n]+\s*/gi, replacement: 'order by ' },
         { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
         { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
-        // 我们暂时禁用这个全局 Dedent，因为它会干扰我们的精确控制
-        // { regex: /\n\s{8}/g, replacement: '\n    ' },
     ];
 
     for (const rule of compactRules) {
@@ -62,81 +63,86 @@ function formatLogic(text) {
     }
 
     // --- 2. 修复问题一：CTE 间隔和顶格 ---
-    formattedText = formattedText.replace(/\),\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/g, '),\n\n$1 as');
+    formattedText = formattedText.replace(/\),\s*(?:[\r\n]+\s*)?([a-zA-Z0-9_]+)\s+as/gi, '),\n\n$1 as');
     formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
     formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
 
-    // --- 3. 修复问题二：所有 Select 字段对齐 (S + 8) ---
+    // --- 3. 核心修复逻辑：块级处理 ---
     const lines = formattedText.split('\n');
-    let currentSelectIndent = null;
-    let resultLines = [];
+    let finalLines = [];
+    let i = 0;
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        const trimmedLine = line.trimStart();
+    while (i < lines.length) {
+        let line = lines[i];
+        let trimmed = line.trimStart();
+        let lowerTrimmed = trimmed.toLowerCase();
 
-        // 顶格处理 CTE 结束括号
-        if (trimmedLine === ')' || trimmedLine === '),') {
-            resultLines.push(trimmedLine);
-            currentSelectIndent = null;
+        if (trimmed === ')' || trimmed === '),') {
+            finalLines.push(trimmed);
+            i++;
             continue;
         }
 
-        if (trimmedLine.toLowerCase().startsWith('select  ')) {
+        if (lowerTrimmed.startsWith('select  ')) {
             const match = line.match(/^(\s*)select/i);
-            currentSelectIndent = match ? match[1].length : 0;
-            resultLines.push(line);
+            const selectIndent = match ? match[1].length : 0;
+            
+            let blockLines = [line];
+            let j = i + 1;
+            while (j < lines.length) {
+                let nextLine = lines[j];
+                let nextTrimmed = nextLine.trimStart().toLowerCase();
+                if (nextTrimmed.startsWith('from ')) break;
+                if (nextTrimmed.startsWith('select ') || nextTrimmed === ')' || nextTrimmed === '),') break;
+                blockLines.push(nextLine);
+                j++;
+            }
+
+            if (blockLines.length > 1) {
+                let minFieldIndent = Infinity;
+                for (let k = 1; k < blockLines.length; k++) {
+                    if (!blockLines[k].trim()) continue;
+                    const m = blockLines[k].match(/^(\s+)/);
+                    const indentLen = m ? m[1].length : 0;
+                    if (indentLen < minFieldIndent) minFieldIndent = indentLen;
+                }
+
+                const targetBaseIndent = selectIndent + 8;
+                const delta = (minFieldIndent === Infinity) ? 0 : (targetBaseIndent - minFieldIndent);
+
+                finalLines.push(blockLines[0]);
+                for (let k = 1; k < blockLines.length; k++) {
+                    let bLine = blockLines[k];
+                    if (!bLine.trim()) {
+                        finalLines.push(bLine);
+                        continue;
+                    }
+                    const m = bLine.match(/^(\s+)/);
+                    const currentIndent = m ? m[1].length : 0;
+                    const newIndent = Math.max(0, currentIndent + delta);
+                    finalLines.push(' '.repeat(newIndent) + bLine.trimStart());
+                }
+            } else {
+                finalLines.push(blockLines[0]);
+            }
+
+            i = j; 
             continue;
         }
 
-        if (currentSelectIndent !== null) {
-            if (trimmedLine.toLowerCase().startsWith('from ')) {
-                const indentStr = ' '.repeat(currentSelectIndent);
-                resultLines.push(indentStr + trimmedLine);
-                currentSelectIndent = null;
-                continue;
-            }
-
-            if (line.trim() === '') {
-                resultLines.push(line);
-                continue;
-            }
-
-            const match = line.match(/^(\s+)/);
-            const originalIndent = match ? match[1].length : 0;
-            
-            // 找出 select 后面应该缩进的基准。
-            // 假设 sql-formatter 对于顶层 select (0格) 的字段缩进是 4 格。
-            // 对于 CTE 内部 select (8格) 的字段缩进是 12 格。
-            // 规律是：字段缩进 = select缩进 + 4 (sql-formatter 默认)
-            // 我们的目标是：字段缩进 = select缩进 + 8
-            
-            // 我们需要先知道这个 select 关键字在 sql-formatter 输出中实际的缩进。
-            // 但在这里我们已经做了一些替换。
-            
-            // 我们可以假设：如果 trimmedLine 开始于 case/sum/column，
-            // 且 originalIndent > currentSelectIndent，那么它就是一个字段行。
-            
-            if (originalIndent > currentSelectIndent) {
-                 const targetIndent = currentSelectIndent + 8 + (originalIndent - (currentSelectIndent + 4));
-                 resultLines.push(' '.repeat(Math.max(0, targetIndent)) + trimmedLine);
-            } else {
-                 resultLines.push(line);
-            }
-        } else {
-            resultLines.push(line);
-        }
+        finalLines.push(line);
+        i++;
     }
-    formattedText = resultLines.join('\n');
+    formattedText = finalLines.join('\n');
 
-    // --- 4. 修复问题三：WHERE 中的 AND/OR ---
+    // --- 4. WHERE 嵌套 ---
     const nestedWhereRegex = /((?:and|or)\s+\(\s*[\r\n]+)([\s\S]*?)(\n\s*\))/gi;
     formattedText = formattedText.replace(nestedWhereRegex, (match, head, body, tail) => {
         const indentMatch = head.match(/^(\s*)/);
         const headIndent = indentMatch ? indentMatch[1].length : 0;
         const bodyIndent = ' '.repeat(headIndent + 4);
         
-        const indentedBody = body.split('\n').map(line => {
+        const indentedBody = body.split('\n').map((line) => {
             if (line.trim() === '') return line;
             return bodyIndent + line.trimStart();
         }).join('\n');
@@ -144,42 +150,52 @@ function formatLogic(text) {
         return head + indentedBody + '\n' + ' '.repeat(headIndent) + ')';
     });
 
-    // --- 5. 修复问题四：CASE WHEN 内部缩进与 THEN 换行 ---
-    // 5.1 THEN 换行
-    formattedText = formattedText.replace(/(\bwhen\b[\s\S]*?)\s+\bthen\b\s+/gi, (match, whenPart) => {
-        const lines = whenPart.split('\n');
-        const lastLine = lines[lines.length - 1];
-        const indentMatch = lastLine.match(/^(\s+)/);
-        const baseIndent = indentMatch ? indentMatch[1] : '            ';
-        return whenPart + '\n' + baseIndent + 'then ';
-    });
-    
-    // 5.2 CASE 内部整体对齐
-    const caseBlockRegex = /(\bcase\b[\s\S]*?\bend\b)/gi;
-    formattedText = formattedText.replace(caseBlockRegex, (match) => {
-        const lines = match.split('\n');
-        if (lines.length <= 1) return match;
-        
-        const firstLineIndentMatch = lines[0].match(/^(\s*)case/i);
-        const firstLineIndent = firstLineIndentMatch ? firstLineIndentMatch[1].length : 0;
-        
-        return lines.map((line, idx) => {
-            if (idx === 0) return line;
-            if (line.trim() === '') return line;
-            
-            const trimmed = line.trimStart();
-            if (trimmed.toLowerCase().startsWith('when ') || trimmed.toLowerCase().startsWith('else ') || trimmed.toLowerCase().startsWith('end')) {
-                return ' '.repeat(firstLineIndent + 4) + trimmed;
-            }
-            if (trimmed.toLowerCase().startsWith('then ')) {
-                return ' '.repeat(firstLineIndent + 4) + trimmed;
-            }
-            // case 内部的其他内容（如 when 内部的 and）
-            return ' '.repeat(firstLineIndent + 8) + trimmed;
-        }).join('\n');
-    });
+    // --- 5. CASE WHEN 内部 ---
+    const caseLines = formattedText.split('\n');
+    let caseStack = [];
+    let resultLines = [];
 
-    const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|;|$)/gi; 
+    for (let i = 0; i < caseLines.length; i++) {
+        const line = caseLines[i];
+        const trimmed = line.trimStart();
+        const lowerTrimmed = trimmed.toLowerCase();
+
+        if (lowerTrimmed.startsWith('case')) {
+            const match = line.match(/^(\s*)case/i);
+            caseStack.push(match ? match[1].length : 0);
+            resultLines.push(line);
+            continue;
+        }
+
+        if (caseStack.length > 0) {
+            const currentCaseIndent = caseStack[caseStack.length - 1];
+
+            if (lowerTrimmed.startsWith('end')) {
+                resultLines.push(' '.repeat(currentCaseIndent) + trimmed);
+                caseStack.pop();
+                continue;
+            }
+
+            if (lowerTrimmed.startsWith('when ') || lowerTrimmed.startsWith('else ') || lowerTrimmed.startsWith('then ')) {
+                resultLines.push(' '.repeat(currentCaseIndent + 4) + trimmed);
+                continue;
+            }
+            
+            const m = line.match(/^(\s+)/);
+            if (m) {
+                resultLines.push(' '.repeat(currentCaseIndent + 8) + trimmed);
+            } else {
+                resultLines.push(line);
+            }
+        } else {
+            resultLines.push(line);
+        }
+    }
+    formattedText = resultLines.join('\n');
+
+    // --- 6. GROUP BY 单行 ---
+    // 修改：增加对 ) 的支持，防止吞掉换行
+    const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|\)|;|$)/gi; 
     formattedText = formattedText.replace(groupByRegex, (match, content, tail) => {
         const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
         return cleanContent + tail;
