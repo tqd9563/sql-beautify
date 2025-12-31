@@ -1,9 +1,10 @@
-# 文件说明
-`sample.sql`: 一段待格式化的sql代码
-`output.sql`: 目前插件格式化后的结果
-`expect.sql`: 我所期望的结果
+# 目录说明
+`/test`是测试用例所在的目录, 其下每一个文件夹对应一组测试用例, 包括三个文件:
+- `sample.sql`: 一段待格式化的sql代码
+- `output.sql`: 目前插件格式化后的结果
+- `expect.sql`: 我所期望的结果
 
-你的目标就是使得修改过后的插件，在`sample.sql`上格式化后的结果与`expect.sql`保持完全一致。
+**你的目标就是使得修改过后的插件，在`sample.sql`上格式化后的结果与`expect.sql`保持完全一致。**
 
 # 格式化规范
 ## CTE别名缩进
@@ -31,11 +32,11 @@ end
 
 
 # 目前存在的问题
-## 1. 多个CTE的空行和缩进问题
+## 1. 多个CTE的空行和缩进问题（已解决）
 - 第二个CTE和第一个CTE之间没有空一行
 - 第二个CTE没有顶格书写
 
-## 2. CTE内部的select缩进问题
+## 2. CTE内部的select缩进问题（已解决）
 - 注意现在第一个CTE内部的select缩进是完全正确的！！！但是第二个CTE内部的select缩进有问题：从第二个select字段起，每个select字段的缩进深度应该比这个CTE内部的select关键字的缩进深度多出8格。以我们的sample中的第二个CTE（media_cnt as ...）为例，select的缩进格数是4，因此select的那些sum函数的缩进格数应该是12格，而不是现在的8格
   - 同时需要注意，现在sum内部的case when的相对缩进是正确的，需要保留
 

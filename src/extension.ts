@@ -47,8 +47,8 @@ export function activate(context: vscode.ExtensionContext) {
             { regex: /order\s+by\s*[\r\n]+\s*/gi, replacement: 'order by ' },
             { regex: /with\s*[\r\n]+\s*([a-zA-Z0-9_]+)\s+as/gi, replacement: 'with $1 as' },
             { regex: /with\s+([a-zA-Z0-9_]+)\s*[\r\n]+\s*as/gi, replacement: 'with $1 as' },
-            // 全局 Dedent 修正：将 8 格缩进降低到 4 格（主要针对 CTE 内容）
-            { regex: /\n\s{8}/g, replacement: '\n    ' },
+            // 修正全局缩进：sql-formatter 在 CTE 内部有时会过度缩进关键字
+            { regex: /\n\s{8,12}(select|from|where|group|having|order|limit)/gi, replacement: '\n    $1' },
         ];
 
         for (const rule of compactRules) {
@@ -60,76 +60,138 @@ export function activate(context: vscode.ExtensionContext) {
         formattedText = formattedText.replace(/\)\s*[\r\n]+\s*(select\s{2})/gi, ')\n\n$1');
         formattedText = formattedText.replace(/\)\n\s+select/gi, ')\n\nselect');
 
-        // --- 3. 修复问题二：所有 Select 字段对齐 (S + 8) ---
+        // --- 3. 核心修复逻辑：块级处理 (处理 Select 字段对齐) ---
         const lines = formattedText.split('\n');
-        let currentSelectIndent: number | null = null;
+        let finalLines: string[] = [];
+        let i = 0;
+
+        while (i < lines.length) {
+            let line = lines[i];
+            let trimmed = line.trimStart();
+            let lowerTrimmed = trimmed.toLowerCase();
+
+            // 3.1 处理 CTE 结束括号 (强制顶格)
+            if (trimmed === ')' || trimmed === '),') {
+                finalLines.push(trimmed);
+                i++;
+                continue;
+            }
+
+            // 3.2 识别 SELECT 块开始
+            if (lowerTrimmed.startsWith('select  ')) {
+                const match = line.match(/^(\s*)select/i);
+                const selectIndent = match ? match[1].length : 0;
+                
+                // 收集整个 SELECT 块直到遇到 FROM
+                let blockLines: string[] = [line];
+                let j = i + 1;
+                while (j < lines.length) {
+                    let nextLine = lines[j];
+                    let nextTrimmed = nextLine.trimStart().toLowerCase();
+                    if (nextTrimmed.startsWith('from ')) break;
+                    if (nextTrimmed.startsWith('select ') || nextTrimmed === ')' || nextTrimmed === '),') break;
+                    blockLines.push(nextLine);
+                    j++;
+                }
+
+                if (blockLines.length > 1) {
+                    // 找到块内字段行的最小缩进
+                    let minFieldIndent = Infinity;
+                    for (let k = 1; k < blockLines.length; k++) {
+                        if (!blockLines[k].trim()) continue;
+                        const m = blockLines[k].match(/^(\s+)/);
+                        const indentLen = m ? m[1].length : 0;
+                        if (indentLen < minFieldIndent) minFieldIndent = indentLen;
+                    }
+
+                    // 计算目标对齐偏移 (selectIndent + 8)
+                    const targetBaseIndent = selectIndent + 8;
+                    const delta = (minFieldIndent === Infinity) ? 0 : (targetBaseIndent - minFieldIndent);
+
+                    finalLines.push(blockLines[0]); // 第一行 select 原样
+                    for (let k = 1; k < blockLines.length; k++) {
+                        let bLine = blockLines[k];
+                        if (!bLine.trim()) {
+                            finalLines.push(bLine);
+                            continue;
+                        }
+                        const m = bLine.match(/^(\s+)/);
+                        const currentIndent = m ? m[1].length : 0;
+                        const newIndent = Math.max(0, currentIndent + delta);
+                        finalLines.push(' '.repeat(newIndent) + bLine.trimStart());
+                    }
+                } else {
+                    finalLines.push(blockLines[0]);
+                }
+
+                i = j; 
+                continue;
+            }
+
+            finalLines.push(line);
+            i++;
+        }
+        formattedText = finalLines.join('\n');
+
+        // --- 4. 修复问题三：WHERE 中的 AND/OR 嵌套 ---
+        const nestedWhereRegex = /((?:and|or)\s+\(\s*[\r\n]+)([\s\S]*?)(\n\s*\))/gi;
+        formattedText = formattedText.replace(nestedWhereRegex, (match, head, body, tail) => {
+            const indentMatch = head.match(/^(\s*)/);
+            const headIndent = indentMatch ? indentMatch[1].length : 0;
+            const bodyIndent = ' '.repeat(headIndent + 4);
+            
+            const indentedBody = body.split('\n').map((line: string) => {
+                if (line.trim() === '') return line;
+                return bodyIndent + line.trimStart();
+            }).join('\n');
+            
+            return head + indentedBody + '\n' + ' '.repeat(headIndent) + ')';
+        });
+
+        // --- 5. 修复问题四：CASE WHEN 内部格式精修 ---
+        const caseLines = formattedText.split('\n');
+        let caseStack: number[] = [];
         let resultLines: string[] = [];
 
-        for (let i = 0; i < lines.length; i++) {
-            const line = lines[i];
-            const trimmedLine = line.trimStart();
+        for (let i = 0; i < caseLines.length; i++) {
+            const line = caseLines[i];
+            const trimmed = line.trimStart();
+            const lowerTrimmed = trimmed.toLowerCase();
 
-            // 检测 SELECT 块开始
-            if (trimmedLine.toLowerCase().startsWith('select  ')) {
-                const match = line.match(/^(\s*)select/i);
-                currentSelectIndent = match ? match[1].length : 0;
+            if (lowerTrimmed.startsWith('case')) {
+                const match = line.match(/^(\s*)case/i);
+                caseStack.push(match ? match[1].length : 0);
                 resultLines.push(line);
                 continue;
             }
 
-            // 在 SELECT 块内部
-            if (currentSelectIndent !== null) {
-                // 检测块结束 (遇到 FROM 或 CTE 结束括号)
-                if (trimmedLine.toLowerCase().startsWith('from ') || trimmedLine === ')') {
-                    const indentStr = ' '.repeat(currentSelectIndent);
-                    resultLines.push(indentStr + trimmedLine);
-                    currentSelectIndent = null;
+            if (caseStack.length > 0) {
+                const currentCaseIndent = caseStack[caseStack.length - 1];
+
+                if (lowerTrimmed.startsWith('end')) {
+                    resultLines.push(' '.repeat(currentCaseIndent) + trimmed);
+                    caseStack.pop();
                     continue;
                 }
 
-                if (line.trim() === '') {
+                if (lowerTrimmed.startsWith('when ') || lowerTrimmed.startsWith('else ') || lowerTrimmed.startsWith('then ')) {
+                    resultLines.push(' '.repeat(currentCaseIndent + 4) + trimmed);
+                    continue;
+                }
+                
+                const m = line.match(/^(\s+)/);
+                if (m) {
+                    resultLines.push(' '.repeat(currentCaseIndent + 8) + trimmed);
+                } else {
                     resultLines.push(line);
-                    continue;
                 }
-
-                // 计算对齐缩进
-                const match = line.match(/^(\s+)/);
-                const originalIndent = match ? match[1].length : 0;
-                
-                // 默认偏移公式：selectIndent + 8 (保留原有相对缩进差异)
-                // 假设原本字段层级是 selectIndent + 4
-                const baseFieldIndent = currentSelectIndent + 4;
-                const targetIndent = currentSelectIndent + 8 + (originalIndent - baseFieldIndent);
-                
-                resultLines.push(' '.repeat(Math.max(0, targetIndent)) + trimmedLine);
             } else {
                 resultLines.push(line);
             }
         }
         formattedText = resultLines.join('\n');
 
-        // --- 4. 修复问题三：WHERE 中的 AND/OR ---
-        // 目标：将 or ( 后的内容缩进加深
-        formattedText = formattedText.replace(/((?:and|or)\s+\(\s*[\r\n]+)\s{4}(\S)/gi, '$1        $2');
-        formattedText = formattedText.replace(/(\n\s{4})(and|or)\b/gi, '$1    $2');
-
-        // --- 5. 修复问题四：CASE WHEN 内部缩进与 THEN 换行 ---
-        // 5.1 WHEN 语句缩进修正
-        // 5.2 THEN 换行
-        formattedText = formattedText.replace(/(\s+when[\s\S]*?)\s+then\s+/gi, (match: string, whenPart: string) => {
-            const lines = whenPart.split('\n');
-            const lastLine = lines[lines.length - 1];
-            const indentMatch = lastLine.match(/^(\s+)/);
-            const baseIndent = indentMatch ? indentMatch[1] : '            ';
-            return whenPart + '\n' + baseIndent + 'then ';
-        });
-
-        // --- 6. 结尾对齐修复 ---
-        // CTE 结束括号顶格
-        formattedText = formattedText.replace(/[\r\n]+\s{4,8}\)/g, '\n)');
-        formattedText = formattedText.replace(/[\r\n]+\s{4,8}\),/g, '\n),');
-
-        // GROUP BY 单行
+        // --- 6. GROUP BY 单行修复 ---
         const groupByRegex = /(group\s+by[\s\S]*?)(having|order\s+by|limit|;|$)/gi; 
         formattedText = formattedText.replace(groupByRegex, (match: string, content: string, tail: string) => {
             const cleanContent = content.replace(/,\s*[\r\n]+\s*/g, ', ');
